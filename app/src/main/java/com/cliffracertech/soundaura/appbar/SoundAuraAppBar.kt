@@ -26,6 +26,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cliffracertech.soundaura.Dispatcher
 import com.cliffracertech.soundaura.R
 import com.cliffracertech.soundaura.edit
 import com.cliffracertech.soundaura.enumPreferenceState
@@ -38,7 +39,7 @@ import com.cliffracertech.soundaura.settings.PrefKeys
 import com.cliffracertech.soundaura.ui.SimpleIconButton
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.toImmutableList
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.plus
 import javax.inject.Inject
 
 /**
@@ -53,27 +54,19 @@ import javax.inject.Inject
  * [ListAppBar.otherIconButtons] parameter should contain a settings icon
  * button that uses the property [onSettingsButtonClick] as its onClick action.
  */
-@HiltViewModel class AppBarViewModel(
+@HiltViewModel class AppBarViewModel @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val navigationState: NavigationState,
-    private val searchQuery: SearchQueryState,
-    coroutineScope: CoroutineScope? = null
+    private val searchQuery: SearchQueryState
 ) : ViewModel() {
+    private val scope = viewModelScope + Dispatcher.Immediate
 
-    @Inject constructor(
-        dataStore: DataStore<Preferences>,
-        navigationState: NavigationState,
-        searchQueryState: SearchQueryState
-    ) : this(dataStore, navigationState, searchQueryState, null)
-
-    private val scope = coroutineScope ?: viewModelScope
-
-    val onBackButtonClick get() = when {
-        navigationState.willConsumeBackButtonClick ->
-            navigationState::onBackButtonClick
+    val onBackButtonClick: (() -> Unit)? get() = when {
         searchQuery.isActive ->
             searchQuery::clear
-        else -> null
+        navigationState.showingAppSettings -> {
+            { navigationState.onBackButtonClick() }
+        } else -> null
     }
 
     val title get() = StringResource(
@@ -119,8 +112,7 @@ import javax.inject.Inject
     fun onSettingsButtonClick() {
         if (searchQuery.isActive)
             searchQuery.clear()
-        navigationState.showingPresetSelector = false
-        navigationState.showingAppSettings = true
+        navigationState.showAppSettings()
     }
 }
 

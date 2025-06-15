@@ -15,7 +15,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.app.ComponentActivity
 import com.cliffracertech.soundaura.service.PlayerService
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
 import dagger.hilt.android.scopes.ActivityRetainedScoped
+import dagger.hilt.components.SingletonComponent
 import java.time.Duration
 import java.time.Instant
 import javax.inject.Inject
@@ -130,6 +134,11 @@ class PlayerServicePlaybackState @Inject constructor(): PlaybackState {
         // active tracks (and their volumes) are read from the database.
         serviceBinder?.setPlaylistVolume(playlistId, volume)
     }
+}
+
+@Module @InstallIn(SingletonComponent::class)
+class PlaybackStateModule {
+    @Provides fun providePlaybackState(): PlaybackState = PlayerServicePlaybackState()
 }
 
 /**

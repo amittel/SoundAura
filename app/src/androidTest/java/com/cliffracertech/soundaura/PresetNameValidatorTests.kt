@@ -5,58 +5,50 @@ package com.cliffracertech.soundaura
 
 import android.content.Context
 import androidx.core.net.toUri
-import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cliffracertech.soundaura.model.Validator
-import com.cliffracertech.soundaura.model.database.PresetDao
-import com.cliffracertech.soundaura.model.database.SoundAuraDatabase
 import com.cliffracertech.soundaura.model.database.newPresetNameValidator
 import com.cliffracertech.soundaura.model.database.presetRenameValidator
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.*
-import org.junit.After
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PresetNameValidatorTests {
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val coroutineScope = TestCoroutineScope()
+    @get:Rule val testScopeRule = TestScopeRule()
+    @get:Rule val dbTestRule = SoundAuraDbTestRule(context)
 
     private lateinit var instance: Validator<String>
-    private lateinit var db: SoundAuraDatabase
-    private lateinit var presetDao: PresetDao
+    private val dao get() = dbTestRule.db.presetDao()
 
     private val existingName = "preset 1"
     private val existingName2 = "preset 2"
     private val newPresetName = "new preset"
 
     @Before fun init() {
-        db = Room.inMemoryDatabaseBuilder(context, SoundAuraDatabase::class.java).build()
-        presetDao = db.presetDao()
-        runBlocking {
+        runTest {
             val names = listOf("track 1")
             val uris = listOf("test uri".toUri())
-            db.playlistDao().insertSingleTrackPlaylists(names, uris, uris)
-            val id = db.playlistDao().getPlaylistsSortedByNameAsc().first().first().id
-            db.playlistDao().toggleIsActive(id)
-            presetDao.savePreset(existingName)
-            presetDao.savePreset(existingName2)
+            val playlistDao = dbTestRule.db.playlistDao()
+            playlistDao.insertSingleTrackPlaylists(names, uris, uris)
+            val id = playlistDao.getPlaylistsSortedByNameAsc().first().first().id
+            playlistDao.toggleIsActive(id)
+            dao.savePreset(existingName)
+            dao.savePreset(existingName2)
         }
     }
 
-    @After fun clean_up() {
-        db.close()
-        coroutineScope.cancel()
-    }
-
     private fun initNewNameValidator() {
-        instance = newPresetNameValidator(presetDao, coroutineScope)
+        instance = newPresetNameValidator(dao, testScopeRule.scope)
+    }
+    private fun initRenameValidator() {
+        instance = presetRenameValidator(dao, testScopeRule.scope, existingName)
     }
 
     @Test fun new_name_validator_begins_blank_without_error() = runTest{
@@ -114,10 +106,6 @@ class PresetNameValidatorTests {
         waitUntil { instance.message != null } // should time out
         val result = instance.validate()
         assertThat(result).isEqualTo(newPresetName)
-    }
-
-    private fun initRenameValidator() {
-        instance = presetRenameValidator(presetDao, coroutineScope, existingName)
     }
 
     @Test fun rename_validator_begins_with_existing_name_without_error() = runTest {

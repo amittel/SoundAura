@@ -6,11 +6,9 @@ package com.cliffracertech.soundaura
 import android.Manifest.permission.READ_PHONE_STATE
 import android.content.Context
 import android.content.pm.PackageManager.PERMISSION_GRANTED
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cliffracertech.soundaura.settings.AppTheme
@@ -18,11 +16,11 @@ import com.cliffracertech.soundaura.settings.OnZeroVolumeAudioDeviceBehavior
 import com.cliffracertech.soundaura.settings.PrefKeys
 import com.cliffracertech.soundaura.settings.SettingsViewModel
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.*
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -39,14 +37,15 @@ import org.junit.runner.RunWith
  */
 class SettingsViewModelTests {
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val scope = TestCoroutineScope()
-    private val dataStore = PreferenceDataStoreFactory
-        .create(scope = scope) { context.preferencesDataStoreFile("testDatastore") }
+    @get:Rule val testScopeRule = TestScopeRule()
+    @get:Rule val dataStoreTestRule = DataStoreTestRule(testScopeRule.scope)
+
     private val appThemeKey = intPreferencesKey(PrefKeys.appTheme)
     private val playInBackgroundKey = booleanPreferencesKey(PrefKeys.playInBackground)
     private val autoPauseDuringCallKey = booleanPreferencesKey(PrefKeys.autoPauseDuringCalls)
     private val onZeroVolumeAudioDeviceBehaviorKey = intPreferencesKey(PrefKeys.onZeroVolumeAudioDeviceBehavior)
 
+    private val dataStore get() = dataStoreTestRule.dataStore
     private lateinit var instance: SettingsViewModel
 
     private suspend fun updatedPreferences() = dataStore.data.first().toPreferences()
@@ -54,12 +53,11 @@ class SettingsViewModelTests {
         context.checkSelfPermission(READ_PHONE_STATE) == PERMISSION_GRANTED
 
     @Before fun init() {
-        instance = SettingsViewModel(context, dataStore, scope)
+        instance = SettingsViewModel(context, dataStore)
     }
 
     @After fun cleanUp() {
         runTest { dataStore.edit { it.clear() } }
-        scope.cancel()
     }
 
     @Test fun default_values() {

@@ -7,18 +7,14 @@ import android.content.Context
 import android.content.Intent
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.net.toUri
-import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.ServiceTestRule
-import com.cliffracertech.soundaura.model.database.SoundAuraDatabase
 import com.cliffracertech.soundaura.model.database.Track
 import com.cliffracertech.soundaura.service.PlayerService
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
-import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -28,15 +24,15 @@ import org.junit.runner.RunWith
 class PlayerServiceTests {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     @get:Rule val serviceRule = ServiceTestRule()
-    private lateinit var db: SoundAuraDatabase
-    private val dao get() = db.playlistDao()
+    @get:Rule val dbTestRule = SoundAuraDbTestRule(context)
+
+    private val dao get() = dbTestRule.db.playlistDao()
     private val testPlaylistUri = "test playlist 1"
 
     @Before fun init() {
         // This test track is added so that PlayerService doesn't prevent
         // changes to STATE_PLAYING due to there not being any active playlists.
-        db = Room.inMemoryDatabaseBuilder(context, SoundAuraDatabase::class.java).build()
-        runBlocking {
+        runTest {
             val id = dao.insertPlaylist(
                 playlistName = testPlaylistUri,
                 shuffle = false,
@@ -44,8 +40,6 @@ class PlayerServiceTests {
             dao.toggleIsActive(id)
         }
     }
-
-    @After fun finish() { db.close() }
 
     @Test fun playback_begins_in_paused_state_by_default() = runTest {
         serviceRule.startService(Intent(context, PlayerService::class.java))
@@ -116,7 +110,7 @@ class PlayerServiceTests {
         assertThat(service.isPlaying).isFalse()
 
         service.toggleIsPlaying()
-        waitUntil { PlayerService.playbackState != PlaybackStateCompat.STATE_PAUSED }
+        waitUntil { PlayerService.playbackState != PlaybackStateCompat.STATE_STOPPED }
         assertThat(service.isPlaying).isTrue()
 
         service.toggleIsPlaying()
@@ -127,8 +121,8 @@ class PlayerServiceTests {
     @Test fun service_prevents_playing_with_no_active_playlists() = runTest {
         val intent = Intent(context, PlayerService::class.java)
         val binder = serviceRule.bindService(intent)
-        waitUntil { PlayerService.playbackState != PlaybackStateCompat.STATE_STOPPED }
-        assertThat(PlayerService.playbackState).isEqualTo(PlaybackStateCompat.STATE_PAUSED)
+        waitUntil { PlayerService.playbackState != PlaybackStateCompat.STATE_STOPPED } // should time out
+        assertThat(PlayerService.playbackState).isEqualTo(PlaybackStateCompat.STATE_STOPPED)
 
         val id = dao.getPlaylistsSortedByNameAsc().first().first().id
         dao.toggleIsActive(id)

@@ -3,6 +3,7 @@
  * the project's root directory to see the full license. */
 package com.cliffracertech.soundaura.model
 
+import androidx.compose.material.SnackbarDuration
 import com.cliffracertech.soundaura.R
 import com.cliffracertech.soundaura.dialog.ValidatedNamingState
 import com.cliffracertech.soundaura.model.database.Playlist
@@ -68,14 +69,14 @@ class ModifyLibraryUseCase(
         tracks: List<Track>
     ) {
         val uris = tracks.map(Track::uri)
-        val newUris = dao.filterNewTracks(uris)
+        val newUris = dao.filterNewUris(uris)
         val removableUris = dao.getUniqueUrisNotIn(uris, playlistId)
-        val postOpPermissionAllowance = permissionHandler.getRemainingAllowance() +
+        val postOpPermissionAllowance = permissionHandler.remainingAllowance +
                                         removableUris.size - newUris.size
         if (postOpPermissionAllowance < 0) {
-            messageHandler.postMessage(StringResource(
+            messageHandler.postMessage(
                 R.string.cant_modify_playlist_tracks_warning,
-                permissionHandler.totalAllowance))
+                duration = SnackbarDuration.Long)
             dao.setPlaylistShuffle(playlistId, shuffle)
         } else {
             val removedUris = dao.setPlaylistShuffleAndTracks(
@@ -85,7 +86,7 @@ class ModifyLibraryUseCase(
                 newUris = newUris,
                 removableUris = removableUris)
             permissionHandler.releasePermissionsFor(removedUris)
-            permissionHandler.acquirePermissionsFor(newUris, allowPartial = false)
+            permissionHandler.acquirePermissionsFor(newUris)
         }
     }
 

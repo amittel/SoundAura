@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.cliffracertech.soundaura.edit
+import com.cliffracertech.soundaura.mediacontroller.MediaControllerState
 import com.cliffracertech.soundaura.model.database.Preset
 import com.cliffracertech.soundaura.model.database.PresetDao
 import com.cliffracertech.soundaura.settings.PrefKeys
@@ -25,18 +26,39 @@ import javax.inject.Inject
 @ActivityRetainedScoped
 class NavigationState @Inject constructor() {
     var showingAppSettings by mutableStateOf(false)
-    var showingPresetSelector by mutableStateOf(false)
+        private set
+    var mediaControllerState by mutableStateOf(MediaControllerState.Visibility.Collapsed)
+        private set
 
-    val willConsumeBackButtonClick get() =
-        showingAppSettings || showingPresetSelector
+    fun showAppSettings() {
+        showingAppSettings = true
+        mediaControllerState = MediaControllerState.Visibility.Hidden
+    }
 
-    fun onBackButtonClick() { when {
+    fun hideAppSettings() {
+        showingAppSettings = false
+        mediaControllerState = MediaControllerState.Visibility.Collapsed
+    }
+
+    fun showPresetSelector() {
+        if (showingAppSettings)
+            return
+        mediaControllerState = MediaControllerState.Visibility.Expanded
+    }
+
+    fun hidePresetSelector() {
+        if (showingAppSettings)
+            return
+        mediaControllerState = MediaControllerState.Visibility.Collapsed
+    }
+
+    fun onBackButtonClick(): Boolean = when {
         showingAppSettings -> {
-            showingAppSettings = false
-        } showingPresetSelector -> {
-            showingPresetSelector = false
-        }
-    }}
+            hideAppSettings(); true
+        } mediaControllerState.isExpanded -> {
+            hidePresetSelector(); true
+        } else -> false
+    }
 }
 
 /**

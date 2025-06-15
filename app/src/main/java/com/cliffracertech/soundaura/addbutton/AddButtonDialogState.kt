@@ -12,6 +12,7 @@ import com.cliffracertech.soundaura.R
 import com.cliffracertech.soundaura.dialog.NamingState
 import com.cliffracertech.soundaura.dialog.ValidatedNamingState
 import com.cliffracertech.soundaura.library.MutablePlaylist
+import com.cliffracertech.soundaura.model.StringResource
 import com.cliffracertech.soundaura.model.Validator
 import com.cliffracertech.soundaura.model.database.Track
 import com.cliffracertech.soundaura.model.database.TrackNamesValidator
@@ -20,13 +21,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
- * A type whose subtypes represent the possible steps in an add local files dialog.
+ * A type whose subtypes represent the possible dialogs that can be shown due
+ * to add button clicks. The properties [wasNavigatedForwardTo], [titleResId],
+ * and [buttons] should be overridden when appropriate.
  *
- * The abstract property [onDismissRequest] must be overridden in subclasses,
- * while the properties [wasNavigatedForwardTo], [titleResId], and [buttons]
- * should be overridden when appropriate.
+ * @param onDismissRequest The callback that should be invoked when the dialog
+ *     has been requested to be dismissed via a tap outside the dialog's bounds,
+ *     a system back button press, or a system back gesture has been performed.
  */
-sealed class AddLocalFilesDialogStep {
+sealed class AddButtonDialogState(
+    val onDismissRequest: () -> Unit,
+) {
     /** Whether the step is ahead of a previous step. Final steps (i.e. ones
      * that end with a finish instead of a next button) should override this
      * value to return true, while intermediate steps should override it to
@@ -35,11 +40,6 @@ sealed class AddLocalFilesDialogStep {
      * is not crucial to functionality, but will allow enter/exit animations
      * between steps to be more precise.  */
     open val wasNavigatedForwardTo = false
-
-    /** The callback that should be invoked when the dialog has been requested
-     * to be dismissed via a tap outside the dialog's bounds, a system back
-     * button press, or a system back gesture has been performed. */
-    abstract val onDismissRequest: () -> Unit
 
     /**
      * A container of state for a visible dialog button.
@@ -63,14 +63,34 @@ sealed class AddLocalFilesDialogStep {
     open val buttons: List<ButtonInfo> = emptyList()
 
     /**
+     * A text field to name a new preset is being presented.
+     *
+     * @param namingState A [ValidatedNamingState] to validate the inputted name
+     */
+    class NamePreset(
+        onDismissRequest: () -> Unit,
+        namingState: ValidatedNamingState,
+    ): AddButtonDialogState(onDismissRequest),
+       NamingState by namingState
+    {
+        override val titleResId = R.string.create_new_preset_dialog_title
+        override val buttons = listOf(
+            ButtonInfo(R.string.cancel, onClick = onDismissRequest),
+            ButtonInfo(
+                textResId = R.string.ok,
+                isEnabledProvider = { message?.isError != true },
+                onClick = ::finish))
+    }
+
+    /**
      * Files are being chosen via the system file picker.
      *
      * @param onFilesSelected The callback that will be invoked when files have been chosen
      */
     class SelectingFiles(
-        override val onDismissRequest: () -> Unit,
+        onDismissRequest: () -> Unit,
         val onFilesSelected: (List<Uri>) -> Unit,
-    ): AddLocalFilesDialogStep()
+    ): AddButtonDialogState(onDismissRequest)
 
     /**
      * A question about whether to add multiple files as separate tracks
@@ -82,10 +102,10 @@ sealed class AddLocalFilesDialogStep {
      *     option to add the files as the contents of a single playlist is chosen
      */
     class AddIndividuallyOrAsPlaylistQuery(
-        override val onDismissRequest: () -> Unit,
+        onDismissRequest: () -> Unit,
         private val onAddIndividuallyClick: () -> Unit,
         private val onAddAsPlaylistClick: () -> Unit,
-    ): AddLocalFilesDialogStep() {
+    ): AddButtonDialogState(onDismissRequest) {
         override val titleResId = R.string.add_local_files_as_playlist_or_tracks_title
         val textResId = R.string.add_local_files_as_playlist_or_tracks_question
         override val buttons = listOf(
@@ -98,25 +118,25 @@ sealed class AddLocalFilesDialogStep {
      * Text fields for each track are being presented to the user to allow them
      * to name each added track. The property [names] should be used as the
      * list of current names to display in each text field. The property
-     * [errors] is a [List] of [Boolean] values, each value of which represents
-     * whether the same-indexed name in [names] is invalid. [message] updates
-     * with the most recent [Validator.Message] concerning the input names.
-     * Changed within any of the text fields should be connected to [onNameChange].
+     * [errorIndices] is a [Set]`<Int>` that contains the indices of invalid names.
+     * [message] updates with the most recent [Validator.Message] concerning the
+     * input names. Changes within any of the text fields should be connected to
+     * [onNameChange].
      *
+     * @param onBackClick The callback that is invoked when the dialog's back button is clicked
      * @param validator The [TrackNamesValidator] instance that will be used
      *     to validate the track names
      * @param coroutineScope The [CoroutineScope] that will be used for background work
-     * @param onBackClick The callback that is invoked when the dialog's back button is clicked
      * @param onFinish The callback that will be invoked when the dialog's
      *     finish button is clicked and none of the track names are invalid
      */
     class NameTracks(
+        onDismissRequest: () -> Unit,
+        onBackClick: () -> Unit,
         private val validator: TrackNamesValidator,
         private val coroutineScope: CoroutineScope,
-        override val onDismissRequest: () -> Unit,
-        onBackClick: () -> Unit,
         private val onFinish: (List<String>) -> Unit,
-    ): AddLocalFilesDialogStep() {
+    ): AddButtonDialogState(onDismissRequest) {
         override val wasNavigatedForwardTo = true
         private var confirmJob: Job? = null
 
@@ -138,7 +158,7 @@ sealed class AddLocalFilesDialogStep {
                 }))
 
         val names by validator::values
-        val errors by validator::errors
+        val errorIndices by validator::errorIndices
         val message by validator::message
         val onNameChange = validator::setValue
     }
@@ -146,24 +166,19 @@ sealed class AddLocalFilesDialogStep {
     /**
      * A text field to name a new playlist is being presented.
      *
+     * @param onBackClick The callback that will be invoked when the dialog's back button is clicked
+     * @param namingState A [ValidatedNamingState] to validate the inputted name
      * @param wasNavigatedForwardTo Whether the step was reached by proceeding
      *     forward from a previous step (as opposed to going backwards from a
      *     following step)
-     * @param validator The [Validator] instance that will be used to validate the playlist name
-     * @param coroutineScope The [CoroutineScope] that will be used for background work
-     * @param onBackClick The callback that will be invoked when the dialog's back button is clicked
-     * @param onNameValidated The callback that will be invoked when the
-     *     dialog's finish button is clicked and the name is valid
      */
     class NamePlaylist(
-        override val wasNavigatedForwardTo: Boolean,
-        validator: Validator<String>,
-        coroutineScope: CoroutineScope,
-        override val onDismissRequest: () -> Unit,
+        onDismissRequest: () -> Unit,
         onBackClick: () -> Unit,
-        onNameValidated: (String) -> Unit,
-    ): AddLocalFilesDialogStep(),
-       NamingState by ValidatedNamingState(validator, coroutineScope, onNameValidated)
+        namingState: NamingState,
+        override val wasNavigatedForwardTo: Boolean,
+    ): AddButtonDialogState(onDismissRequest),
+       NamingState by namingState
    {
        override val titleResId = R.string.add_local_files_as_playlist_dialog_title
        override val buttons = listOf(
@@ -181,18 +196,18 @@ sealed class AddLocalFilesDialogStep {
      * switch should be connected to [onShuffleSwitchClick]. The provided [mutablePlaylist]
      * can be used in a [com.cliffracertech.soundaura.library.PlaylistOptionsView].
      *
-     * @param trackUris The [List] of [Uri]s that represent the new playlist's tracks
      * @param onBackClick The callback that will be invoked when the dialog's back button is clicked
+     * @param trackUris The [List] of [Uri]s that represent the new playlist's tracks
      * @param onFinish The callback that will be invoked when the dialog's
      *     finish button is clicked. The current shuffle and track ordering
      *     as passed as arguments.
      */
     class PlaylistOptions(
-        trackUris: List<Uri>,
-        override val onDismissRequest: () -> Unit,
+        onDismissRequest: () -> Unit,
         onBackClick: () -> Unit,
+        trackUris: List<Uri>,
         private val onFinish: (shuffleEnabled: Boolean, newTrackList: List<Track>) -> Unit,
-    ): AddLocalFilesDialogStep() {
+    ): AddButtonDialogState(onDismissRequest) {
         var shuffleEnabled by mutableStateOf(false)
             private set
         val onShuffleSwitchClick = { shuffleEnabled = !shuffleEnabled }
@@ -206,4 +221,32 @@ sealed class AddLocalFilesDialogStep {
                 onFinish(shuffleEnabled, mutablePlaylist.applyChanges())
             }))
     }
+
+    /** An explanation for why the storage permission is needed is being presented.
+     * The [text] [StringResource] property should be resolved and display to the user. */
+    class RequestStoragePermissionExplanation(
+        onDismissRequest: () -> Unit,
+        permissionsUsed: Int,
+        permissionsAllowed: Int,
+        addingPlaylist: Boolean,
+        onOkClick: () -> Unit
+    ): AddButtonDialogState(onDismissRequest) {
+        override val wasNavigatedForwardTo = true
+        override val titleResId = R.string.add_local_files_request_storage_permission_title
+        override val buttons = listOf(ButtonInfo(R.string.ok, onClick = onOkClick))
+
+        val text = StringResource(
+            string = null,
+            stringResId = if (addingPlaylist)
+                R.string.add_local_files_request_storage_permission_explanation_for_playlist
+            else R.string.add_local_files_request_storage_permission_explanation_for_tracks,
+            /*arg1 =*/permissionsUsed,
+            /*arg2 =*/permissionsAllowed)
+    }
+
+    /** The storage permission request is being presented. */
+    class RequestStoragePermission(
+        onDismissRequest: () -> Unit,
+        val onResult: (Boolean) -> Unit,
+    ): AddButtonDialogState(onDismissRequest)
 }

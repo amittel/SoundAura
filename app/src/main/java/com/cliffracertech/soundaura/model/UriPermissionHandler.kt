@@ -3,99 +3,112 @@
  * the project's root directory to see the full license. */
 package com.cliffracertech.soundaura.model
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import com.cliffracertech.soundaura.logd
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.Collections.emptyList
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /** UriPermissionHandler describes the expected interface for a
- * manager of a limited number of persistable file permissions:
+ * manager of a limited number of file permissions, each of which
+ * is described via a [Uri].
  * [acquirePermissionsFor] and [releasePermissionsFor]. */
 interface UriPermissionHandler {
+    /** The maximum number of file permissions permitted by the platform. */
     val totalAllowance: Int
-    fun getRemainingAllowance(): Int
+
+    /** The number of file permissions already used. */
+    val usedAllowance: Int
+
+    /** The number of file permissions remaining. */
+    val remainingAllowance get() = totalAllowance - usedAllowance
 
     /**
      * Acquire permissions for each file [Uri] in [uris], if space permits. If
      * the size of [uris] is greater than the remaining permission count, then
-     * no permissions will be acquired if [allowPartial] is false. Otherwise,
-     * as many permissions as space permits will be acquired.
+     * no permissions will be acquired.
      *
-     * @return The list of uris that the app does NOT have permission to use.
+     * @return Whether all of the permissions were successfully acquired
      */
-    fun acquirePermissionsFor(
-        uris: List<Uri>,
-        allowPartial: Boolean = true
-    ): List<Uri>
+    fun acquirePermissionsFor(uris: List<Uri>): Boolean
 
     /** Release any persisted permissions for the [Uri]s in [uris]. */
     fun releasePermissionsFor(uris: List<Uri>)
 }
 
-/** A mock [UriPermissionHandler] whose methods do nothing. */
+/** A mock [UriPermissionHandler] whose methods simulate
+ * a limited number of permission allowances. */
 class TestPermissionHandler: UriPermissionHandler {
-    override val totalAllowance = 512
-    override fun getRemainingAllowance() = 512
-    override fun acquirePermissionsFor(
-        uris: List<Uri>,
-        allowPartial: Boolean
-    ): List<Uri> = emptyList()
-    override fun releasePermissionsFor(uris: List<Uri>) = Unit
+    private val grantedPermissions = mutableSetOf<Uri>()
+
+    override val totalAllowance = 12
+    override val usedAllowance get() = grantedPermissions.size
+
+    override fun acquirePermissionsFor(uris: List<Uri>): Boolean {
+        val newUris = uris.filterNot(grantedPermissions::contains)
+        val hasEnoughSpace = remainingAllowance >= uris.size
+        if (hasEnoughSpace)
+            grantedPermissions.addAll(newUris)
+        return hasEnoughSpace
+    }
+    override fun releasePermissionsFor(uris: List<Uri>) {
+        grantedPermissions.removeAll(uris.toSet())
+    }
 }
 
-/** An implementation of [UriPermissionHandler] that takes persistable [Uri]
- * permissions granted by the Android system. If a persistable [Uri] permission
- * was not originally granted by the Android system for any of the [Uri]s in
- * the list passed to [acquirePermissionsFor], the operation will fail. */
+/**
+ * An implementation of [UriPermissionHandler] that takes into account if the
+ * app has audio media access (i.e. it has the READ_MEDIA_AUDIO permission on
+ * API >= 33, or the READ_EXTERNAL_STORAGE permission on API < 33), and if not
+ * takes persistable [Uri] permissions granted by the Android system. If a
+ * persistable [Uri] permission was not originally granted by the Android
+ * system for any of the [Uri]s in the list passed to [acquirePermissionsFor],
+ * the operation will fail.
+ */
 @Singleton
 class AndroidUriPermissionHandler @Inject constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
 ): UriPermissionHandler {
-    private val contentResolver = context.contentResolver
+    private val hasStoragePermission get() = context.checkSelfPermission(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                Manifest.permission.READ_MEDIA_AUDIO
+            else Manifest.permission.READ_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
 
     override val totalAllowance =
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) 128
         else                                               512
 
-    override fun getRemainingAllowance() =
-        totalAllowance - contentResolver.persistedUriPermissions.size
+    override val usedAllowance get() =
+        context.contentResolver.persistedUriPermissions.size
 
-    override fun acquirePermissionsFor(
-        uris: List<Uri>,
-        allowPartial: Boolean
-    ): List<Uri> {
-        val remainingSpace = getRemainingAllowance()
-        val hasEnoughSpace = remainingSpace >= uris.size
-
-        when {
-            hasEnoughSpace -> uris
-            allowPartial ->   uris.subList(0, remainingSpace)
-            else ->           emptyList()
-        }.forEach {
-            try {
-                contentResolver.takePersistableUriPermission(
-                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    override fun acquirePermissionsFor(uris: List<Uri>): Boolean = when {
+        hasStoragePermission -> true
+        remainingAllowance < uris.size -> false
+        else -> {
+            var successfulGrants = 0
+            for (uri in uris) try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                successfulGrants++
             } catch (e: SecurityException) {
                 logd("Attempted to obtain a persistable permission for " +
-                     "$it when no persistable permission was granted.")
+                     "$uri when no persistable permission was granted.")
+                releasePermissionsFor(uris.subList(0, successfulGrants))
+                break
             }
-        }
-
-        return when {
-            hasEnoughSpace -> emptyList()
-            allowPartial ->   uris.subList(remainingSpace, uris.size)
-            else ->           uris
+            successfulGrants == uris.size
         }
     }
 
     override fun releasePermissionsFor(uris: List<Uri>) {
         for (uri in uris) try {
-            contentResolver.releasePersistableUriPermission(uri, 0)
+            context.contentResolver.releasePersistableUriPermission(uri, 0)
         } catch (e: SecurityException) {
             logd("Attempted to release Uri permission for $uri " +
                  "when no permission was previously granted")

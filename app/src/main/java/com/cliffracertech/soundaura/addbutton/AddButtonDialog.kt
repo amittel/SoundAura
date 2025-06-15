@@ -3,7 +3,9 @@
  * the project's root directory to see the full license. */
 package com.cliffracertech.soundaura.addbutton
 
+import android.Manifest
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -29,10 +31,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.cliffracertech.soundaura.dialog.AnimatedValidatorMessage
 import com.cliffracertech.soundaura.dialog.DialogWidth
+import com.cliffracertech.soundaura.dialog.NamingState
 import com.cliffracertech.soundaura.dialog.SoundAuraDialog
 import com.cliffracertech.soundaura.library.PlaylistOptionsView
 import com.cliffracertech.soundaura.ui.HorizontalDivider
@@ -44,26 +49,26 @@ import com.cliffracertech.soundaura.ui.bottomShape
 import com.cliffracertech.soundaura.ui.bottomStartShape
 import com.cliffracertech.soundaura.ui.minTouchTargetSize
 
-@Composable private fun ColumnScope.AddLocalFilesDialogButtons(
-    step: AddLocalFilesDialogStep
+@Composable private fun ColumnScope.AddButtonDialogButtons(
+    state: AddButtonDialogState
 ) {
     HorizontalDivider()
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max)) {
-        step.buttons.forEachIndexed { index, button ->
+        state.buttons.forEachIndexed { index, button ->
             TextButton(
                 modifier = Modifier.minTouchTargetSize().weight(1f),
                 enabled = button.isEnabledProvider(),
                 shape = when {
-                    step.buttons.size == 1 ->
+                    state.buttons.size == 1 ->
                         MaterialTheme.shapes.medium.bottomShape()
                     index == 0 ->
                         MaterialTheme.shapes.medium.bottomStartShape()
-                    index == step.buttons.lastIndex ->
+                    index == state.buttons.lastIndex ->
                         MaterialTheme.shapes.medium.bottomEndShape()
                     else -> RectangleShape
                 }, textResId = button.textResId,
                 onClick = button.onClick)
-            if (index != step.buttons.lastIndex)
+            if (index != state.buttons.lastIndex)
                 VerticalDivider()
         }
     }
@@ -88,82 +93,120 @@ import com.cliffracertech.soundaura.ui.minTouchTargetSize
     LaunchedEffect(Unit) { launcher.launch(fileTypeArgs) }
 }
 
-/** Open a multi-step dialog for the user to select one or more audio files
- * to add to their library. The shown step will change according to [step]. */
-@Composable fun AddLocalFilesDialog(step: AddLocalFilesDialogStep) {
-    if (step is AddLocalFilesDialogStep.SelectingFiles) {
-        SystemFileChooser { uris ->
-            if (uris.isEmpty())
-                step.onDismissRequest()
-            else step.onFilesSelected(uris)
-        }
-    } else SoundAuraDialog(
+@Composable private fun AccessAudioFilesPermissionRequester(onPermissionGranted: (Boolean) -> Unit) {
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = onPermissionGranted)
+    val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                         Manifest.permission.READ_MEDIA_AUDIO
+                     else Manifest.permission.READ_EXTERNAL_STORAGE
+    LaunchedEffect(Unit) { launcher.launch(permission)}
+}
+
+@Composable private fun NamingTextField(
+    state: NamingState,
+    modifier: Modifier,
+) = Column(modifier) {
+    TextField(
+        value = state.name,
+        onValueChange = state::onNameChange,
+        textStyle = MaterialTheme.typography.body1,
+        singleLine = true,
+        isError = state.message?.isError == true,
+        modifier = Modifier.fillMaxWidth())
+    AnimatedValidatorMessage(state.message)
+}
+
+/** Show the add button related dialog to the user inside an instance of
+ * [SoundAuraDialog]. Nothing will be shown if the value of [state] is one of
+ * [AddButtonDialogState]'s values that are not displayed in an instance of
+ * [SoundAuraDialog] (generally ones that are shown as Android system dialogs
+ * instead, e.g. a permission dialog).*/
+@Composable private fun AddButtonSoundAuraDialogShower(state: AddButtonDialogState) =
+    SoundAuraDialog(
         width = DialogWidth.MatchToScreenSize(WindowInsets.ime),
-        title = stringResource(step.titleResId),
-        onDismissRequest = step.onDismissRequest,
-        buttons = { AddLocalFilesDialogButtons(step) }
+        title = stringResource(state.titleResId),
+        onDismissRequest = state.onDismissRequest,
+        buttons = { AddButtonDialogButtons(state) }
     ) {
         SlideAnimatedContent(
-            targetState = step,
-            leftToRight = step.wasNavigatedForwardTo,
-        ) { step ->
+            targetState = state,
+            leftToRight = state.wasNavigatedForwardTo,
+        ) { state ->
             // This background modifiers gives a border to the content to
             // improve the appearance of the SlideAnimatedContent animations
             val backgroundModifier = Modifier
                 .background(MaterialTheme.colors.surface)
                 .padding(horizontal = 16.dp)
-            when (step) {
-                is AddLocalFilesDialogStep.SelectingFiles -> {}
-                is AddLocalFilesDialogStep.AddIndividuallyOrAsPlaylistQuery -> {
+            when (state) {
+                is AddButtonDialogState.SelectingFiles -> {}
+                is AddButtonDialogState.RequestStoragePermission -> {}
+                is AddButtonDialogState.AddIndividuallyOrAsPlaylistQuery -> {
                     Box(modifier = backgroundModifier.padding(vertical = 16.dp),
                         // The vertical padding is set to match the TextField decoration box's
                         // vertical padding. This reduces the amount that the dialog box height
                         // has to be animated when switching between steps of the dialog.
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        Text(stringResource(step.textResId))
+                        Text(stringResource(state.textResId))
                     }
-                } is AddLocalFilesDialogStep.NameTracks -> {
-                    // We have to restrict the LazyColumn's height to prevent
-                    // a crash due to nested infinite height scrollables
-                    val maxHeight = LocalConfiguration.current.screenHeightDp.dp
-                    Column(backgroundModifier.heightIn(max = maxHeight)) {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(step.names.size) { index ->
+                } is AddButtonDialogState.NamePreset -> {
+                    NamingTextField(state, backgroundModifier)
+                } is AddButtonDialogState.NameTracks -> {
+                    Column(backgroundModifier) {
+                        // We have to restrict the LazyColumn's height to prevent
+                        // a crash due to nested infinite height scrollables
+                        val maxHeight = (LocalConfiguration.current.screenHeightDp * 2 / 3).dp
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = maxHeight),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(state.names.size) { index ->
                                 TextField(
-                                    value = step.names[index],
-                                    onValueChange = { step.onNameChange(index, it) },
+                                    value = state.names[index],
+                                    onValueChange = { state.onNameChange(index, it) },
                                     textStyle = MaterialTheme.typography.body1,
                                     singleLine = true,
-                                    isError = step.errors[index],
+                                    isError = state.errorIndices.contains(index),
                                     modifier = Modifier.fillMaxWidth())
                             }
                         }
-                        AnimatedValidatorMessage(step.message)
+                        AnimatedValidatorMessage(state.message)
                     }
-                } is AddLocalFilesDialogStep.NamePlaylist -> {
-                    Column(backgroundModifier) {
-                        TextField(
-                            value = step.name,
-                            onValueChange = step::onNameChange,
-                            textStyle = MaterialTheme.typography.body1,
-                            singleLine = true,
-                            isError = step.message?.isError == true,
-                            modifier = Modifier.fillMaxWidth())
-                        AnimatedValidatorMessage(step.message)
-                    }
-                } is AddLocalFilesDialogStep.PlaylistOptions-> {
+                } is AddButtonDialogState.NamePlaylist -> {
+                    NamingTextField(state, backgroundModifier)
+                } is AddButtonDialogState.PlaylistOptions -> {
                     // PlaylistOptions already has its own horizontal padding, so we avoid
                     // using backgroundModifier here to prevent doubling up on the padding
                     Column(Modifier.background(MaterialTheme.colors.surface)) {
                         PlaylistOptionsView(
-                            shuffleEnabled = step.shuffleEnabled,
-                            onShuffleClick = step.onShuffleSwitchClick,
-                            mutablePlaylist = step.mutablePlaylist,
+                            shuffleEnabled = state.shuffleEnabled,
+                            onShuffleClick = state.onShuffleSwitchClick,
+                            mutablePlaylist = state.mutablePlaylist,
                             onAddButtonClick = null)
+                    }
+                } is AddButtonDialogState.RequestStoragePermissionExplanation -> {
+                    val context = LocalContext.current
+                    Box(modifier = backgroundModifier.padding(bottom = 8.dp)) {
+                        Text(state.text.resolve(context),
+                             textAlign = TextAlign.Justify)
                     }
                 }
             }
         }
     }
+
+/** Show an add button related dialog to the user. */
+@Composable fun AddButtonDialogShower(state: AddButtonDialogState) {
+    when (state) {
+        is AddButtonDialogState.SelectingFiles -> {
+            SystemFileChooser { uris ->
+                if (uris.isEmpty())
+                    state.onDismissRequest()
+                else state.onFilesSelected(uris)
+            }
+        } is AddButtonDialogState.RequestStoragePermission -> {
+            AccessAudioFilesPermissionRequester(state.onResult)
+        } else -> AddButtonSoundAuraDialogShower(state)
+   }
 }

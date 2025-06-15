@@ -10,10 +10,12 @@ import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
+import com.cliffracertech.soundaura.Dispatcher
 import com.cliffracertech.soundaura.R
 import com.cliffracertech.soundaura.model.Validator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.withContext
 
 @Entity(tableName = "preset")
 data class Preset(@PrimaryKey val name: String)
@@ -131,12 +133,13 @@ fun newPresetNameValidator(
     initialValue = "",
     coroutineScope = coroutineScope,
     messageFor = { name, hasBeenChanged -> when {
-        name.isBlank() && hasBeenChanged ->
-            Validator.Message.Error(R.string.name_dialog_blank_name_error_message)
-        dao.exists(name) ->
-            Validator.Message.Error(R.string.name_dialog_duplicate_name_error_message)
-        else -> null
-    }})
+            name.isBlank() && hasBeenChanged ->
+                Validator.Message.Error(R.string.name_dialog_blank_name_error_message)
+            withContext(Dispatcher.IO) { dao.exists(name) } ->
+                Validator.Message.Error(R.string.name_dialog_duplicate_name_error_message)
+            else -> null
+        }
+    })
 
 /**
  * Return a [Validator] that validates the renaming of an existing [Preset].
@@ -155,7 +158,9 @@ fun presetRenameValidator(
     coroutineScope = coroutineScope,
     messageFor = { name, _ -> when {
         name == oldName ->  null
-        name.isBlank() ->   Validator.Message.Error(R.string.name_dialog_blank_name_error_message)
-        dao.exists(name) -> Validator.Message.Error(R.string.name_dialog_duplicate_name_error_message)
-        else ->             null
+        name.isBlank() ->
+            Validator.Message.Error(R.string.name_dialog_blank_name_error_message)
+        withContext(Dispatcher.IO) { dao.exists(name) } ->
+            Validator.Message.Error(R.string.name_dialog_duplicate_name_error_message)
+        else -> null
     }})

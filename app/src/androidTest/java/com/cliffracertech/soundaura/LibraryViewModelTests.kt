@@ -5,16 +5,13 @@ package com.cliffracertech.soundaura
 
 import android.content.Context
 import androidx.core.net.toUri
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.preferencesDataStoreFile
-import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.cliffracertech.soundaura.library.LibraryViewModel
 import com.cliffracertech.soundaura.library.LibraryState
+import com.cliffracertech.soundaura.library.LibraryViewModel
 import com.cliffracertech.soundaura.library.Playlist
 import com.cliffracertech.soundaura.library.PlaylistDialog
 import com.cliffracertech.soundaura.library.RemovablePlaylistTrack
@@ -28,15 +25,12 @@ import com.cliffracertech.soundaura.model.TestPermissionHandler
 import com.cliffracertech.soundaura.model.TestPlaybackState
 import com.cliffracertech.soundaura.model.UriPermissionHandler
 import com.cliffracertech.soundaura.model.database.PlaylistDao
-import com.cliffracertech.soundaura.model.database.SoundAuraDatabase
 import com.cliffracertech.soundaura.model.database.Track
 import com.cliffracertech.soundaura.settings.PrefKeys
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.test.*
-import org.junit.After
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -45,14 +39,15 @@ typealias PlaylistSort = com.cliffracertech.soundaura.model.database.Playlist.So
 @RunWith(AndroidJUnit4::class)
 class LibraryViewModelTests {
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val scope = TestCoroutineScope()
+    @get:Rule val testScopeRule = TestScopeRule()
+    @get:Rule val dbTestRule = SoundAuraDbTestRule(context)
+    @get:Rule val dataStoreTestRule = DataStoreTestRule(testScopeRule.scope)
+
+    private val dao get() = dbTestRule.db.playlistDao()
+    private val dataStore get() = dataStoreTestRule.dataStore
     private val playlistSortKey = intPreferencesKey(PrefKeys.playlistSort)
     private val showActivePlaylistsFirstKey = booleanPreferencesKey(PrefKeys.showActivePlaylistsFirst)
-    private val dataStore = PreferenceDataStoreFactory
-        .create(scope = scope) { context.preferencesDataStoreFile("testDatastore") }
 
-    private lateinit var db: SoundAuraDatabase
-    private lateinit var dao: PlaylistDao
     private lateinit var permissionHandler: UriPermissionHandler
     private lateinit var messageHandler: MessageHandler
     private lateinit var playbackState: PlaybackState
@@ -60,8 +55,6 @@ class LibraryViewModelTests {
     private lateinit var instance: LibraryViewModel
 
     @Before fun init() {
-        db = Room.inMemoryDatabaseBuilder(context, SoundAuraDatabase::class.java).build()
-        dao = db.playlistDao()
         permissionHandler = TestPermissionHandler()
         messageHandler = MessageHandler()
         playbackState = TestPlaybackState()
@@ -70,12 +63,6 @@ class LibraryViewModelTests {
             ReadLibraryUseCase(dataStore, searchQueryState, dao),
             ModifyLibraryUseCase(permissionHandler, messageHandler, dao),
             searchQueryState, messageHandler, playbackState)
-    }
-
-    @After fun cleanUp() {
-        db.close()
-        runBlocking { dataStore.edit { it.clear() } }
-        scope.cancel()
     }
 
     private val testUris = List(4) { "uri $it".toUri() }
@@ -147,7 +134,6 @@ class LibraryViewModelTests {
 
     @Test fun content_state_playlists_match_db() = runTest {
         insertTestPlaylists()
-        waitUntil { instance.viewState != LibraryState.Loading }
         assertThat(instance.viewState).isInstanceOf(LibraryState.Content::class)
         assertThat(contentState.playlists).containsExactlyElementsIn(testPlaylists).inOrder()
 
@@ -241,7 +227,6 @@ class LibraryViewModelTests {
     @Test fun rename_dialog_appearance() = runTest {
         insertTestPlaylists()
         contentState.playlistViewCallback.onRenameClick(testPlaylists[1])
-        waitUntil { instance.shownDialog != null }
         assertThat(instance.shownDialog).isInstanceOf(PlaylistDialog.Rename::class)
         assertThat(renameDialog.target).isEqualTo(testPlaylists[1])
     }
@@ -249,11 +234,9 @@ class LibraryViewModelTests {
     @Test fun rename_dialog_dismissal() = runTest {
         insertTestPlaylists()
         contentState.playlistViewCallback.onRenameClick(testPlaylists[1])
-        waitUntil { instance.shownDialog != null }
 
         // Make changes that (hopefully) won't be saved
         renameDialog.onNameChange("new name")
-        waitUntil { renameDialog.name == "new name" }
         renameDialog.onDismissRequest()
         assertThat(instance.shownDialog).isNull()
         assertThat(dao.getPlaylistNames()).doesNotContain("new name")
@@ -262,12 +245,10 @@ class LibraryViewModelTests {
     @Test fun rename_dialog_confirmation() = runTest {
         insertTestPlaylists()
         contentState.playlistViewCallback.onRenameClick(testPlaylists[1])
-        waitUntil { instance.shownDialog != null }
         renameDialog.onNameChange("new name")
-        waitUntil { renameDialog.name == "new name" }
         renameDialog.finish()
-        waitUntil { dao.getPlaylistNames().contains("new name") }
 
+        waitUntil { dao.getPlaylistNames().contains("new name") }
         assertThat(instance.shownDialog).isNull()
         assertThat(dao.getPlaylistNames()).containsExactlyElementsIn(
             testPlaylistNames.toMutableList().also { it[1] = "new name" })
@@ -285,7 +266,6 @@ class LibraryViewModelTests {
         contentState.playlistViewCallback.onExtraOptionsClick(testPlaylists[1])
         waitUntil { instance.shownDialog != null }
         fileChooser.onDismissRequest()
-        waitUntil { instance.shownDialog == null }
 
         assertThat(instance.shownDialog).isNull()
         val playlistUris = dao.getPlaylistUris(testPlaylists[1].id)
@@ -314,9 +294,7 @@ class LibraryViewModelTests {
         waitUntil { instance.shownDialog != null }
         val newUris = List(2) { "new uri $it".toUri() }
         fileChooser.onFilesChosen(newUris)
-        waitUntil { instance.shownDialog !is PlaylistDialog.FileChooser }
         playlistOptionsDialog.onDismissRequest()
-        waitUntil { instance.shownDialog !is PlaylistDialog.PlaylistOptions }
         assertThat(instance.shownDialog).isNull()
     }
 
@@ -326,7 +304,6 @@ class LibraryViewModelTests {
         waitUntil { instance.shownDialog != null }
         val newUris = List(2) { "new uri $it".toUri() }
         fileChooser.onFilesChosen(newUris)
-        waitUntil { instance.shownDialog !is PlaylistDialog.FileChooser }
 
         playlistOptionsDialog.mutablePlaylist.moveTrack(2, 0)
         playlistOptionsDialog.onShuffleSwitchClick()
@@ -363,8 +340,6 @@ class LibraryViewModelTests {
         playlistOptionsDialog.mutablePlaylist.toggleTrackRemoval(3)
 
         playlistOptionsDialog.onDismissRequest()
-        waitUntil { instance.shownDialog == null }
-
         assertThat(instance.shownDialog).isNull()
         assertThat(dao.getPlaylistShuffle(testPlaylists[4].id)).isTrue()
         val actualUris = dao.getPlaylistUris(testPlaylists[4].id)
@@ -380,9 +355,7 @@ class LibraryViewModelTests {
         playlistOptionsDialog.mutablePlaylist.moveTrack(3, 1)
         playlistOptionsDialog.mutablePlaylist.toggleTrackRemoval(3)
         playlistOptionsDialog.onFinishClick()
-        waitUntil { instance.shownDialog == null }
         waitUntil { !dao.getPlaylistShuffle(testPlaylists[4].id) }
-        waitUntil { dao.getPlaylistTracks(testPlaylists[4].id).size < 4 }
 
         assertThat(instance.shownDialog).isNull()
         assertThat(dao.getPlaylistShuffle(testPlaylists[4].id)).isFalse()
@@ -397,7 +370,6 @@ class LibraryViewModelTests {
         waitUntil { instance.shownDialog != null }
 
         playlistOptionsDialog.onAddFilesClick()
-        waitUntil { instance.shownDialog !is PlaylistDialog.PlaylistOptions }
         assertThat(instance.shownDialog).isInstanceOf(PlaylistDialog.FileChooser::class)
     }
 
@@ -406,11 +378,8 @@ class LibraryViewModelTests {
         contentState.playlistViewCallback.onExtraOptionsClick(testPlaylists[4])
         waitUntil { instance.shownDialog != null }
         playlistOptionsDialog.onAddFilesClick()
-        waitUntil { instance.shownDialog is PlaylistDialog.FileChooser }
 
         fileChooser.onDismissRequest()
-        waitUntil { instance.shownDialog !is PlaylistDialog.FileChooser }
-
         assertThat(instance.shownDialog).isInstanceOf(PlaylistDialog.PlaylistOptions::class)
         assertThat(playlistOptionsDialog.target).isEqualTo(testPlaylists[4])
         val actualUris = playlistOptionsDialog.mutablePlaylist.tracks.map(RemovablePlaylistTrack::uri)
@@ -422,11 +391,9 @@ class LibraryViewModelTests {
         contentState.playlistViewCallback.onExtraOptionsClick(testPlaylists[4])
         waitUntil { instance.shownDialog != null }
         playlistOptionsDialog.onAddFilesClick()
-        waitUntil { instance.shownDialog is PlaylistDialog.FileChooser }
 
         val newUris = List(2) { "new uri $it".toUri() }
         fileChooser.onFilesChosen(newUris)
-        waitUntil { instance.shownDialog !is PlaylistDialog.FileChooser }
 
         assertThat(instance.shownDialog).isInstanceOf(PlaylistDialog.PlaylistOptions::class)
         assertThat(playlistOptionsDialog.target).isEqualTo(testPlaylists[4])
@@ -435,7 +402,6 @@ class LibraryViewModelTests {
         assertThat(actualUris).containsExactlyElementsIn(expectedUris).inOrder()
 
         playlistOptionsDialog.onFinishClick()
-        waitUntil { instance.shownDialog == null }
         waitUntil { dao.getPlaylistTracks(testPlaylists[4].id).size > 4 }
         assertThat(instance.shownDialog).isNull()
         actualUris = dao.getPlaylistUris(testPlaylists[4].id)
@@ -445,7 +411,6 @@ class LibraryViewModelTests {
     @Test fun remove_dialog_appearance() = runTest {
         insertTestPlaylists()
         contentState.playlistViewCallback.onRemoveClick(testPlaylists[1])
-        waitUntil { instance.shownDialog != null }
         assertThat(instance.shownDialog).isInstanceOf(PlaylistDialog.Remove::class)
         assertThat(removeDialog.target).isEqualTo(testPlaylists[1])
     }
@@ -453,7 +418,6 @@ class LibraryViewModelTests {
     @Test fun remove_dialog_dismissal() = runTest {
         insertTestPlaylists()
         contentState.playlistViewCallback.onRemoveClick(testPlaylists[1])
-        waitUntil { instance.shownDialog != null }
         removeDialog.onDismissRequest()
         waitUntil { dao.getPlaylistNames().size < testPlaylists.size } // should time out
         assertThat(instance.shownDialog).isNull()
@@ -463,8 +427,8 @@ class LibraryViewModelTests {
     @Test fun remove_dialog_confirmation() = runTest {
         insertTestPlaylists()
         contentState.playlistViewCallback.onRemoveClick(testPlaylists[1])
-        waitUntil { instance.shownDialog != null }
         removeDialog.onConfirmClick()
+
         waitUntil { dao.getPlaylistNames().size < testPlaylists.size }
         assertThat(instance.shownDialog).isNull()
         assertThat(dao.getPlaylistNames())

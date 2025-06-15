@@ -5,53 +5,39 @@ package com.cliffracertech.soundaura
 
 import android.content.Context
 import androidx.core.net.toUri
-import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.cliffracertech.soundaura.model.database.PlaylistDao
-import com.cliffracertech.soundaura.model.database.SoundAuraDatabase
 import com.cliffracertech.soundaura.model.database.TrackNamesValidator
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.*
-import org.junit.After
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class TrackNamesValidatorTests {
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val coroutineScope = TestCoroutineScope()
+    @get:Rule val testScopeRule = TestScopeRule()
+    @get:Rule val dbTestRule = SoundAuraDbTestRule(context)
 
+    private val playlistDao get() = dbTestRule.db.playlistDao()
     private lateinit var instance: TrackNamesValidator
-    private lateinit var db: SoundAuraDatabase
-    private lateinit var playlistDao: PlaylistDao
 
     private val existingNames = List(5) { "track $it" }
     private val newNames = List(5) { "new track $it" }
 
     @Before fun init() {
-        db = Room.inMemoryDatabaseBuilder(context, SoundAuraDatabase::class.java).build()
-        playlistDao = db.playlistDao()
-        runBlocking {
+        runTest {
             val uris = List(5) { "uri $it".toUri() }
             playlistDao.insertSingleTrackPlaylists(existingNames, uris, uris)
         }
-        instance = TrackNamesValidator(playlistDao, coroutineScope, newNames)
-    }
-
-    @After fun clean_up() {
-        db.close()
-        coroutineScope.cancel()
+        instance = TrackNamesValidator(playlistDao, testScopeRule.scope, newNames)
     }
 
     @Test fun begins_with_provided_names_without_errors() = runTest {
         assertThat(instance.values).containsExactlyElementsIn(newNames).inOrder()
-        waitUntil { false } // we need to wait until the validator retrieves the
-                            // existing track/playlist names from the database
-        assertThat(instance.errors).containsNoneOf(true, true)
+        assertThat(instance.errorIndices).isEmpty()
         assertThat(instance.message).isNull()
     }
 
@@ -69,41 +55,41 @@ class TrackNamesValidatorTests {
 
     @Test fun existing_names_cause_errors() = runTest {
         instance.setValue(1, existingNames[1])
-        waitUntil { instance.errors.contains(true) }
-        assertThat(instance.errors).containsExactly(false, true, false, false, false).inOrder()
+        waitUntil { instance.errorIndices.isNotEmpty() }
+        assertThat(instance.errorIndices).containsExactly(1)
 
         instance.setValue(3, existingNames[3])
-        waitUntil { instance.errors.count { true } == 2 }
-        assertThat(instance.errors).containsExactly(false, true, false, true, false).inOrder()
+        waitUntil { instance.errorIndices.size == 2 }
+        assertThat(instance.errorIndices).containsExactly(1, 3)
 
         instance.setValue(1, newNames[1])
         instance.setValue(3, newNames[3])
-        waitUntil { !instance.errors.contains(true) }
-        assertThat(instance.errors).containsNoneOf(true, true)
+        waitUntil { instance.errorIndices.isEmpty() }
+        assertThat(instance.errorIndices).isEmpty()
     }
 
     @Test fun blank_names_cause_errors() = runTest {
         instance.setValue(2, "")
-        waitUntil { instance.errors.contains(true) }
-        assertThat(instance.errors).containsExactly(false, false, true, false, false).inOrder()
+        waitUntil { instance.errorIndices.isNotEmpty() }
+        assertThat(instance.errorIndices).containsExactly(2)
 
         instance.setValue(4, "")
-        waitUntil { instance.errors.count { true } == 2 }
-        assertThat(instance.errors).containsExactly(false, false, true, false, true).inOrder()
+        waitUntil { instance.errorIndices.size == 2 }
+        assertThat(instance.errorIndices).containsExactly(2, 4).inOrder()
 
         instance.setValue(2, "a")
         instance.setValue(4, "b")
-        waitUntil { !instance.errors.contains(true) }
-        assertThat(instance.errors).containsNoneOf(true, true)
+        waitUntil { instance.errorIndices.isEmpty() }
+        assertThat(instance.errorIndices).isEmpty()
     }
 
     @Test fun duplicate_new_names_are_both_errors() = runTest {
         instance.setValue(3, newNames[1])
-        waitUntil { instance.errors.count { it } == 2 }
-        assertThat(instance.errors).containsExactly(false, true, false, true, false).inOrder()
+        waitUntil { instance.errorIndices.size == 2 }
+        assertThat(instance.errorIndices).containsExactly(1, 3)
         instance.setValue(1, newNames[3])
-        waitUntil { !instance.errors.contains(true) }
-        assertThat(instance.errors).containsNoneOf(true, true)
+        waitUntil { instance.errorIndices.isEmpty() }
+        assertThat(instance.errorIndices).isEmpty()
     }
 
     @Test fun error_message_updates() = runTest {

@@ -18,10 +18,12 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.cliffracertech.soundaura.Dispatcher
 import com.cliffracertech.soundaura.R
 import com.cliffracertech.soundaura.collectAsState
 import com.cliffracertech.soundaura.edit
 import com.cliffracertech.soundaura.enumPreferenceState
+import com.cliffracertech.soundaura.launchIO
 import com.cliffracertech.soundaura.model.database.Playlist
 import com.cliffracertech.soundaura.preferenceFlow
 import com.cliffracertech.soundaura.preferenceState
@@ -32,8 +34,8 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,8 +44,7 @@ val Context.dataStore by preferencesDataStore(name = "settings")
 @Module @InstallIn(SingletonComponent::class)
 class PreferencesModule {
     @Singleton @Provides
-    fun provideDatastore(@ApplicationContext app: Context) =
-        app.dataStore
+    fun provideDatastore(@ApplicationContext app: Context) = app.dataStore
 }
 
 object PrefKeys {
@@ -168,18 +169,11 @@ enum class OnZeroVolumeAudioDeviceBehavior {
 }
 
 @HiltViewModel
-class SettingsViewModel(
-    context: Context,
+class SettingsViewModel @Inject constructor(
+    @ApplicationContext context: Context,
     private val dataStore: DataStore<Preferences>,
-    coroutineScope: CoroutineScope? = null
 ) : ViewModel() {
-
-    @Inject constructor(
-        @ApplicationContext context: Context,
-        dataStore: DataStore<Preferences>,
-    ) : this(context, dataStore, null)
-
-    private val scope = coroutineScope ?: viewModelScope
+    private val scope = viewModelScope + Dispatcher.Immediate
     private val appThemeKey = intPreferencesKey(PrefKeys.appTheme)
     private val playInBackgroundKey = booleanPreferencesKey(PrefKeys.playInBackground)
     private val notificationPermissionRequestedKey =
@@ -242,8 +236,8 @@ class SettingsViewModel(
             !notificationPermissionRequested &&
             !hasNotificationPermission
         ) {
-            scope.launch {
-                dataStore.edit{ it[notificationPermissionRequestedKey] = true }
+            scope.launchIO {
+                dataStore.edit(notificationPermissionRequestedKey, true)
             }
             showingNotificationPermissionDialog = true
         }

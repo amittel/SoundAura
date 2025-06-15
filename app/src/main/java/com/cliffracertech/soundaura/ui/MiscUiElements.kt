@@ -7,6 +7,7 @@ import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
@@ -14,9 +15,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -24,6 +27,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -46,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -67,12 +72,12 @@ import com.cliffracertech.soundaura.rememberMutableStateOf
 import kotlinx.coroutines.delay
 
 internal const val tweenDuration = 250// * 4
-internal const val springStiffness = 700f// / 30f
+internal const val springStiffness = 700f // 30f
 
 fun <T> defaultSpring() = spring<T>(stiffness = springStiffness)
 
 fun Modifier.minTouchTargetSize() =
-    sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+    this.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
 
 /**
  * An [AnimatedContent] with predefined slide left/right transitions.
@@ -213,7 +218,7 @@ fun Modifier.minTouchTargetSize() =
     stringResource(textResId), onClick)
 
 /** The same as an [androidx.compose.material.IconButton], except
- * tht the inner contents are set to be an [Icon] composable that
+ * that the inner contents are set to be an [Icon] composable that
  * uses [icon], [contentDescription], and [tint]. */
 @Composable fun SimpleIconButton(
     icon: ImageVector,
@@ -230,3 +235,32 @@ fun Modifier.minTouchTargetSize() =
     Icon(icon, contentDescription,
          Modifier.padding(iconPadding), tint)
 }
+
+/**
+ * Show a clickable overlay over the maximum allowed size if [show] is true.
+ * [appearanceProgressProvider] should be a method that returns the current
+ * progress of the overlay's show/hide animation, e.g. using [animateFloatAsState].
+ * When [show] is true, clicks on the overlay will invoke [onClick]. The
+ * provided [content] will be aligned inside the overlay according to the
+ * value of [contentAlignment].
+ *
+ */
+@Composable fun Overlay(
+    show: Boolean,
+    appearanceProgressProvider: () -> Float,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    contentAlignment: Alignment = Alignment.Center,
+    content: @Composable BoxScope.() -> Unit
+) = Box(modifier = modifier
+    .fillMaxSize()
+    .drawBehind {
+        drawRect(Color.Black, alpha = appearanceProgressProvider() / 2f)
+    }.then(                 // Disabled clickable modifiers still consume taps, so we
+        if (!show) Modifier // have to add or remove the clickable modifier as necessary.
+        else Modifier.clickable(
+            remember{ MutableInteractionSource() },
+            indication = null, onClick = onClick)),
+    contentAlignment = contentAlignment,
+    content = content
+)

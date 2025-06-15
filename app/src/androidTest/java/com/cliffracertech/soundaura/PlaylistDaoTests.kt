@@ -3,42 +3,30 @@
  * the project's root directory to see the full license. */
 package com.cliffracertech.soundaura
 
-import android.content.Context
 import androidx.core.net.toUri
-import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cliffracertech.soundaura.model.database.LibraryPlaylist
-import com.cliffracertech.soundaura.model.database.PlaylistDao
-import com.cliffracertech.soundaura.model.database.SoundAuraDatabase
 import com.cliffracertech.soundaura.model.database.Track
 import com.cliffracertech.soundaura.service.ActivePlaylistSummary
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
-import org.junit.After
-import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PlaylistDaoTests {
-    private lateinit var db: SoundAuraDatabase
-    private lateinit var dao: PlaylistDao
+    @get:Rule val testScopeRule = TestScopeRule()
+    @get:Rule val dbTestRule = SoundAuraDbTestRule(
+        ApplicationProvider.getApplicationContext())
 
+    private val dao get() = dbTestRule.db.playlistDao()
     private val testUris = List(5) { "uri $it".toUri() }
     private val testTracks = testUris.map(::Track)
     private val testPlaylistNames = listOf(
         "playlist b", "playlist d", "playlist a", "playlist c", "track e")
-
-    @Before fun init() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        db = Room.inMemoryDatabaseBuilder(
-            context, SoundAuraDatabase::class.java).build()
-        dao = db.playlistDao()
-    }
-
-    @After fun closeDb() { db.close() }
 
     @Test fun initial_list_is_empty() = runTest {
         assertThat(dao.getPlaylistNames()).isEmpty()
@@ -179,11 +167,11 @@ class PlaylistDaoTests {
     }
     
     @Test fun filter_new_tracks() = runTest {
-        var newTracks = dao.filterNewTracks(testUris)
+        var newTracks = dao.filterNewUris(testUris)
         assertThat(newTracks).containsExactlyElementsIn(testUris)
         
         dao.insertPlaylist(testPlaylistNames[0], false, testTracks.subList(0, 2))
-        newTracks = dao.filterNewTracks(testUris)
+        newTracks = dao.filterNewUris(testUris)
         assertThat(newTracks).containsExactlyElementsIn(testUris.subList(2, 5))
     }
 

@@ -4,58 +4,48 @@
 package com.cliffracertech.soundaura
 
 import android.content.Context
-import android.net.Uri
 import androidx.core.net.toUri
-import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cliffracertech.soundaura.model.Validator
-import com.cliffracertech.soundaura.model.database.PlaylistDao
-import com.cliffracertech.soundaura.model.database.SoundAuraDatabase
 import com.cliffracertech.soundaura.model.database.newPlaylistNameValidator
 import com.cliffracertech.soundaura.model.database.playlistRenameValidator
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.*
-import org.junit.After
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PlaylistNameValidatorTests {
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val coroutineScope = TestCoroutineScope()
+    @get:Rule val testScopeRule = TestScopeRule()
+    @get:Rule val dbTestRule = SoundAuraDbTestRule(context)
 
+    private val dao get() = dbTestRule.db.playlistDao()
     private lateinit var instance: Validator<String>
-    private lateinit var db: SoundAuraDatabase
-    private lateinit var playlistDao: PlaylistDao
 
     private val existingName1 = "playlist 1"
     private val existingName2 = "playlist 2"
     private val newPlaylistName = "new playlist"
 
     @Before fun init() {
-        db = Room.inMemoryDatabaseBuilder(context, SoundAuraDatabase::class.java).build()
-        playlistDao = db.playlistDao()
-        runBlocking {
+        runTest {
             val names = listOf(existingName1, existingName2)
             val uris = List(2) { "test uri $it".toUri() }
-            playlistDao.insertSingleTrackPlaylists(names, uris, uris)
+            dao.insertSingleTrackPlaylists(names, uris, uris)
         }
     }
 
-    @After fun clean_up() {
-        db.close()
-        coroutineScope.cancel()
-    }
-
     private fun initNewNameValidator() {
-        instance = newPlaylistNameValidator(playlistDao, coroutineScope)
+        instance = newPlaylistNameValidator(dao, testScopeRule.scope)
+    }
+    private fun initRenameValidator() {
+        instance = playlistRenameValidator(dao, existingName1, testScopeRule.scope)
     }
 
-    @Test fun new_name_validator_begins_blank_without_error() = runTest{
+    @Test fun new_name_validator_begins_blank_without_error() = runTest {
         initNewNameValidator()
         assertThat(instance.value).isEqualTo("")
         waitUntil { instance.message != null } // should time out
@@ -110,10 +100,6 @@ class PlaylistNameValidatorTests {
         waitUntil { instance.message != null } // should time out
         val result = instance.validate()
         assertThat(result).isEqualTo(newPlaylistName)
-    }
-
-    private fun initRenameValidator() {
-        instance = playlistRenameValidator(playlistDao, existingName1, coroutineScope)
     }
 
     @Test fun rename_validator_begins_with_existing_name_without_error() = runTest {
